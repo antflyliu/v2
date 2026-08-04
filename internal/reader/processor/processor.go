@@ -126,7 +126,8 @@ func ProcessFeedEntries(store *storage.Storage, feed *model.Feed, userID int64, 
 				metric.ScraperRequestDuration.WithLabelValues(status).Observe(time.Since(startTime).Seconds())
 			}
 
-			if scraperErr != nil {
+			switch {
+			case scraperErr != nil:
 				slog.Warn("Unable to scrape entry",
 					slog.Int64("user_id", user.ID),
 					slog.String("entry_url", entry.URL),
@@ -134,7 +135,7 @@ func ProcessFeedEntries(store *storage.Storage, feed *model.Feed, userID int64, 
 					slog.String("feed_url", feed.FeedURL),
 					slog.Any("error", scraperErr),
 				)
-			} else if extractedContent != "" {
+			case extractedContent != "":
 				// We replace the entry content only if the scraper doesn't return any error.
 				// The content provided by the feed (usually a summary) is kept in a
 				// dedicated field instead of being discarded.
@@ -143,6 +144,19 @@ func ProcessFeedEntries(store *storage.Storage, feed *model.Feed, userID int64, 
 				}
 				entry.Content = minifyContent(extractedContent)
 				contentExtractedSuccessfully = true
+			default:
+				// The scraper succeeded but did not find any content: the page
+				// probably requires JavaScript or an authenticated session, or the
+				// scraper rules do not match anything. Keep the content provided by
+				// the feed and make the failure visible, otherwise the entry looks
+				// exactly like a feed that ships its full content.
+				slog.Warn("The scraper did not return any content, keeping the content provided by the feed",
+					slog.Int64("user_id", user.ID),
+					slog.String("entry_url", entry.URL),
+					slog.Int64("feed_id", feed.ID),
+					slog.String("feed_url", feed.FeedURL),
+					slog.String("scraper_rules", feed.ScraperRules),
+				)
 			}
 		}
 
@@ -236,6 +250,16 @@ func ProcessEntryWebPage(feed *model.Feed, entry *model.Entry, user *model.User)
 		if user.ShowReadingTime {
 			entry.ReadingTime = readingtime.EstimateReadingTime(entry.Content, user.DefaultReadingSpeed, user.CJKReadingSpeed)
 		}
+	} else {
+		// Same as in ProcessFeedEntries: an empty content means the scraper found
+		// nothing, so the feed content is kept as-is and no summary is recorded.
+		slog.Warn("The scraper did not return any content, keeping the content provided by the feed",
+			slog.Int64("user_id", user.ID),
+			slog.Int64("entry_id", entry.ID),
+			slog.String("entry_url", entry.URL),
+			slog.Int64("feed_id", feed.ID),
+			slog.String("scraper_rules", feed.ScraperRules),
+		)
 	}
 
 	rewrite.ApplyContentRewriteRules(entry, entry.Feed.RewriteRules)
