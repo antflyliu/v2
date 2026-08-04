@@ -34,8 +34,8 @@ func (e *EntryQueryBuilder) WithEnclosures() *EntryQueryBuilder {
 	return e
 }
 
-// WithoutContent excludes the content column from the query results,
-// replacing it with an empty string. This significantly reduces data
+// WithoutContent excludes the content and summary columns from the query
+// results, replacing them with an empty string. This significantly reduces data
 // transfer from PostgreSQL on list pages where content is not displayed.
 func (e *EntryQueryBuilder) WithoutContent() *EntryQueryBuilder {
 	e.excludeContent = true
@@ -314,6 +314,7 @@ func (e *EntryQueryBuilder) fetchEntries(withCount bool) (model.Entries, int, er
 			e.author,
 			e.share_code,
 			` + e.contentColumn() + `,
+			` + e.summaryColumn() + `,
 			e.status,
 			e.starred,
 			e.reading_time,
@@ -386,6 +387,7 @@ func (e *EntryQueryBuilder) fetchEntries(withCount bool) (model.Entries, int, er
 			&entry.Author,
 			&entry.ShareCode,
 			&entry.Content,
+			&entry.Summary,
 			&entry.Status,
 			&entry.Starred,
 			&entry.ReadingTime,
@@ -517,6 +519,16 @@ func (e *EntryQueryBuilder) contentColumn() string {
 		return "'' AS content"
 	}
 	return "e.content"
+}
+
+// summaryColumn returns the summary column, following the same rules as
+// contentColumn: the summary is a content field and is therefore excluded
+// alongside the content on list pages.
+func (e *EntryQueryBuilder) summaryColumn() string {
+	if e.excludeContent {
+		return "'' AS summary"
+	}
+	return "e.summary"
 }
 
 func (e *EntryQueryBuilder) buildCondition() string {

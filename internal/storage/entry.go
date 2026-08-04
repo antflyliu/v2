@@ -48,6 +48,11 @@ func (s *Storage) CountAllEntries() (map[string]int64, error) {
 }
 
 // UpdateEntryTitleAndContent updates entry title and content.
+//
+// The summary is only updated when the caller provides one, which happens when
+// the scraped content replaced the content provided by the feed. Otherwise the
+// existing value is kept, so fetching the original content twice does not
+// discard the feed summary.
 func (s *Storage) UpdateEntryTitleAndContent(entry *model.Entry) error {
 	truncatedTitle, truncatedContent := truncateTitleAndContentForTSVectorField(entry.Title, entry.Content)
 	query := `
@@ -56,16 +61,18 @@ func (s *Storage) UpdateEntryTitleAndContent(entry *model.Entry) error {
 		SET
 			title=$1,
 			content=$2,
-			reading_time=$3,
-			document_vectors = setweight(to_tsvector($4), 'A') || setweight(to_tsvector($5), 'B')
+			summary=COALESCE(NULLIF($3, ''), summary),
+			reading_time=$4,
+			document_vectors = setweight(to_tsvector($5), 'A') || setweight(to_tsvector($6), 'B')
 		WHERE
-			id=$6 AND user_id=$7
+			id=$7 AND user_id=$8
 	`
 
 	if _, err := s.db.Exec(
 		query,
 		entry.Title,
 		entry.Content,
+		entry.Summary,
 		entry.ReadingTime,
 		truncatedTitle,
 		truncatedContent,
@@ -99,7 +106,8 @@ func (s *Storage) createEntry(tx *sql.Tx, entry *model.Entry) error {
 				changed_at,
 				document_vectors,
 				tags,
-				language
+				language,
+				summary
 			)
 		SELECT
 			$1,
@@ -115,7 +123,8 @@ func (s *Storage) createEntry(tx *sql.Tx, entry *model.Entry) error {
 			now(),
 			setweight(to_tsvector($11), 'A') || setweight(to_tsvector($12), 'B'),
 			$13,
-			$14
+			$14,
+			$15
 		WHERE NOT EXISTS (
 			SELECT 1 FROM entry_tombstones WHERE feed_id=$9 AND hash=$2
 		)
@@ -138,6 +147,7 @@ func (s *Storage) createEntry(tx *sql.Tx, entry *model.Entry) error {
 		truncatedContent,
 		pq.Array(entry.Tags),
 		entry.Language,
+		entry.Summary,
 	).Scan(
 		&entry.ID,
 		&entry.Status,
@@ -166,6 +176,10 @@ func (s *Storage) createEntry(tx *sql.Tx, entry *model.Entry) error {
 // updateEntry updates an entry when a feed is refreshed.
 // Note: we do not update the published date because some feeds do not contains any date,
 // it default to time.Now() which could change the order of items on the history page.
+//
+// When the refresh did not scrape the original web page ($14 is empty) and the
+// stored entry already has a summary, the stored content comes from the scraper
+// and must not be replaced by the content provided by the feed.
 func (s *Storage) updateEntry(tx *sql.Tx, entry *model.Entry) error {
 	truncatedTitle, truncatedContent := truncateTitleAndContentForTSVectorField(entry.Title, entry.Content)
 	query := `
@@ -175,10 +189,20 @@ func (s *Storage) updateEntry(tx *sql.Tx, entry *model.Entry) error {
 			title=$1,
 			url=$2,
 			comments_url=$3,
-			content=$4,
+			content=CASE
+				WHEN NULLIF($14, '') IS NULL AND summary <> '' THEN content
+				ELSE $4
+			END,
+			summary=CASE
+				WHEN NULLIF($14, '') IS NULL AND summary <> '' THEN $4
+				ELSE COALESCE(NULLIF($14, ''), summary)
+			END,
 			author=$5,
 			reading_time=$6,
-			document_vectors = setweight(to_tsvector($7), 'A') || setweight(to_tsvector($8), 'B'),
+			document_vectors = CASE
+				WHEN NULLIF($14, '') IS NULL AND summary <> '' THEN document_vectors
+				ELSE setweight(to_tsvector($7), 'A') || setweight(to_tsvector($8), 'B')
+			END,
 			tags=$12,
 			language=$13
 		WHERE
@@ -201,6 +225,7 @@ func (s *Storage) updateEntry(tx *sql.Tx, entry *model.Entry) error {
 		entry.Hash,
 		pq.Array(entry.Tags),
 		entry.Language,
+		entry.Summary,
 	).Scan(&entry.ID)
 	if err != nil {
 		return fmt.Errorf(`store: unable to update entry %q: %v`, entry.URL, err)
