@@ -146,3 +146,75 @@ Credits
 
 - Authors: Frédéric Guillot - [List of contributors](https://github.com/miniflux/v2/graphs/contributors)
 - Distributed under Apache 2.0 License
+
+
+# 本地启动
+
+```
+
+go build -o miniflux.exe .
+
+# 注入版本号的 ldflags
+go build -ldflags="-X 'miniflux.app/v2/internal/version.Version=dev'" -o miniflux.exe .
+
+```
+
+
+go 相关的其它命令：
+```
+go env GOPROXY
+
+# 测试下载模块
+go mod download
+go mod tidy
+
+# 清缓存
+go clean -modcache
+go clean -cache
+
+# 确认 gopls
+gopls version
+
+# 如没有 gopls 执行安装命令：
+go install golang.org/x/tools/gopls@latest
+```
+
+PG 建库：
+
+```
+> cd C:\Program Files\PostgreSQL\16\bin
+> .\psql.exe -U postgres -c "CREATE DATABASE miniflux;"
+> .\psql.exe -U postgres -d miniflux -c "CREATE EXTENSION IF NOT EXISTS hstore;"
+
+
+```
+
+【tasks.json 是跑命令，launch.json 是起调试器（底层是 dlv）】
+
+对 .vscode 下 tasks.json 的使用：
+```
+1. Ctrl+Shift+P
+2. 输入 Tasks: Run Task（中文界面是"任务: 运行任务"）
+3. 回车后弹出任务列表，选你要的 label
+4. 停止任务：Ctrl+Shift+P → Tasks: Terminate Task。或者直接在任务终端里 Ctrl+C。
+5. 重跑上一个：Ctrl+Shift+P → Tasks: Rerun Last Task。命令面板里最近跑过的任务也会置顶显示。
+```
+
+单独执行命令：Set-ExecutionPolicy -Scope CurrentUser RemoteSigned，输 Y 回车即可。
+这条命令写的是注册表：HKCU:\Software\Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell\ExecutionPolicy
+永久生效，跟着你的 Windows 用户账户走。以后新开终端、重装 VS Code、重启电脑都不用再执行。所以确实是"一次性"的。
+
+对 .vscode 下 launch.json 的使用：
+```
+调试使用
+```
+
+# 订阅本地服务
+
+对于如果要订阅本地启动的 rsshub 中的服务，需要开启如下配置(.env.dev + packaging/miniflux.conf)：
+```
+# 解除默认阻止 fetcher 访问私有网络和回环地址
+FETCHER_ALLOW_PRIVATE_NETWORKS=1
+```
+
+

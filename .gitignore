@@ -5,3 +5,9 @@
 *.deb
 *.rpm
 miniflux-*
+
+dev*.ps1
+.env.dev
+.vscode/
+tmp/
+*.exe
