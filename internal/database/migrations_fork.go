@@ -27,7 +27,28 @@ var forkMigrations = []func(tx *sql.Tx) error{
 		// Existing rows are not backfilled on purpose: for those rows it is
 		// impossible to know whether content comes from the feed or from the
 		// scraper.
-		_, err = tx.Exec(`ALTER TABLE entries ADD COLUMN summary text not null default '';`)
+		//
+		// The statements below are idempotent: the column may already exist
+		// because it was created manually before this migration was written.
+		// In that case we only make sure the default value and the NOT NULL
+		// constraint match what the application expects, instead of failing
+		// with SQLSTATE 42701 (duplicate_column).
+		_, err = tx.Exec(`ALTER TABLE entries ADD COLUMN IF NOT EXISTS summary text;`)
+		if err != nil {
+			return err
+		}
+
+		_, err = tx.Exec(`UPDATE entries SET summary='' WHERE summary IS NULL;`)
+		if err != nil {
+			return err
+		}
+
+		_, err = tx.Exec(`ALTER TABLE entries ALTER COLUMN summary SET DEFAULT '';`)
+		if err != nil {
+			return err
+		}
+
+		_, err = tx.Exec(`ALTER TABLE entries ALTER COLUMN summary SET NOT NULL;`)
 		return err
 	},
 }
