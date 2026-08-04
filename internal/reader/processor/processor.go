@@ -136,6 +136,11 @@ func ProcessFeedEntries(store *storage.Storage, feed *model.Feed, userID int64, 
 				)
 			} else if extractedContent != "" {
 				// We replace the entry content only if the scraper doesn't return any error.
+				// The content provided by the feed (usually a summary) is kept in a
+				// dedicated field instead of being discarded.
+				if entry.Summary == "" {
+					entry.Summary = entry.Content
+				}
 				entry.Content = minifyContent(extractedContent)
 				contentExtractedSuccessfully = true
 			}
@@ -164,6 +169,13 @@ func ProcessFeedEntries(store *storage.Storage, feed *model.Feed, userID int64, 
 		// The sanitizer should always run at the end of the process to make sure unsafe HTML is filtered out.
 		entry.Content = sanitizer.SanitizeHTML(webpageBaseURL, entry.Content, &sanitizer.SanitizerOptions{OpenLinksInNewTab: user.OpenExternalLinksInNewTab})
 
+		// The summary can be displayed to the user as well, so it must be
+		// sanitized too. Relative links are resolved against the entry URL
+		// because the summary comes from the feed and not from the scraped page.
+		if entry.Summary != "" {
+			entry.Summary = sanitizer.SanitizeHTML(entry.URL, entry.Summary, &sanitizer.SanitizerOptions{OpenLinksInNewTab: user.OpenExternalLinksInNewTab})
+		}
+
 		updateEntryReadingTime(store, feed, entry, entryIsNew, user)
 
 		filteredEntries = append(filteredEntries, entry)
@@ -180,6 +192,7 @@ func ProcessFeedEntries(store *storage.Storage, feed *model.Feed, userID int64, 
 func ProcessEntryWebPage(feed *model.Feed, entry *model.Entry, user *model.User) error {
 	startTime := time.Now()
 	entry.URL = rewrite.RewriteEntryURL(feed, entry)
+	feedContentBaseURL := entry.URL
 
 	requestBuilder := fetcher.NewRequestBuilder().
 		WithUserAgent(feed.UserAgent, config.Opts.HTTPClientUserAgent()).
@@ -211,6 +224,14 @@ func ProcessEntryWebPage(feed *model.Feed, entry *model.Entry, user *model.User)
 	}
 
 	if extractedContent != "" {
+		// Keep the content provided by the feed before the scraped content
+		// replaces it. The existing summary is preserved when the user fetches
+		// the original content more than once, otherwise the feed content would
+		// be replaced by a previously scraped content.
+		if entry.Summary == "" {
+			entry.Summary = sanitizer.SanitizeHTML(feedContentBaseURL, entry.Content, &sanitizer.SanitizerOptions{OpenLinksInNewTab: user.OpenExternalLinksInNewTab})
+		}
+
 		entry.Content = minifyContent(extractedContent)
 		if user.ShowReadingTime {
 			entry.ReadingTime = readingtime.EstimateReadingTime(entry.Content, user.DefaultReadingSpeed, user.CJKReadingSpeed)

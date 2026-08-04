@@ -16,10 +16,10 @@ func Migrate(db *sql.DB) error {
 
 	slog.Info("Running database migrations",
 		slog.Int("current_version", currentVersion),
-		slog.Int("latest_version", schemaVersion),
+		slog.Int("latest_version", allSchemaVersion),
 	)
 
-	for version := currentVersion; version < schemaVersion; version++ {
+	for version := currentVersion; version < allSchemaVersion; version++ {
 		newVersion := version + 1
 
 		tx, err := db.Begin()
@@ -27,7 +27,7 @@ func Migrate(db *sql.DB) error {
 			return fmt.Errorf("[Migration v%d] %v", newVersion, err)
 		}
 
-		if err := migrations[version](tx); err != nil {
+		if err := allMigrations[version](tx); err != nil {
 			tx.Rollback()
 			return fmt.Errorf("[Migration v%d] %v", newVersion, err)
 		}
@@ -54,8 +54,8 @@ func Migrate(db *sql.DB) error {
 func IsSchemaUpToDate(db *sql.DB) error {
 	var currentVersion int
 	db.QueryRow(`SELECT version FROM schema_version`).Scan(&currentVersion)
-	if currentVersion < schemaVersion {
-		return fmt.Errorf(`the database schema is not up to date: current=v%d expected=v%d`, currentVersion, schemaVersion)
+	if currentVersion < allSchemaVersion {
+		return fmt.Errorf(`the database schema is not up to date: current=v%d expected=v%d`, currentVersion, allSchemaVersion)
 	}
 	return nil
 }
