@@ -61,10 +61,24 @@ func ScrapeWebsite(requestBuilder *fetcher.RequestBuilder, pageURL, rules string
 		baseURL, extractedContent, err = readability.ExtractContent(htmlDocumentReader)
 	}
 
+	// The error returned by the extraction step used to be discarded, which
+	// turned a failed extraction into a silent "no content" result: callers
+	// kept the content provided by the feed without any way to know why.
+	if err != nil {
+		return "", "", fmt.Errorf("scraper: unable to extract content from %s: %w", pageURL, err)
+	}
+
 	if baseURL == "" {
 		baseURL = pageURL
 	} else {
 		slog.Debug("Using base URL from HTML document", "base_url", baseURL)
+	}
+
+	if extractedContent == "" {
+		slog.Debug("The scraper did not extract any content",
+			"url", pageURL,
+			"rules", rules,
+		)
 	}
 
 	return baseURL, extractedContent, nil

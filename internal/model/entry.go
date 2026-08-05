@@ -24,6 +24,14 @@ const MaxEntryLimit = 1000
 const MaxEntryIDsLimit = 10000
 
 // Entry represents a feed item in the system.
+//
+// Content and Summary are two distinct things:
+//   - Content is what should be displayed to the user: the scraped web page
+//     content when the full content was fetched, the content provided by the
+//     feed otherwise.
+//   - Summary holds the content provided by the feed and is only set when the
+//     scraped content replaced it, so a non-empty Summary means that Content
+//     comes from the scraper.
 type Entry struct {
 	ID          int64         `json:"id"`
 	UserID      int64         `json:"user_id"`
@@ -38,6 +46,7 @@ type Entry struct {
 	CreatedAt   time.Time     `json:"created_at"`
 	ChangedAt   time.Time     `json:"changed_at"`
 	Content     string        `json:"content"`
+	Summary     string        `json:"summary"`
 	Author      string        `json:"author"`
 	ShareCode   string        `json:"share_code"`
 	Starred     bool          `json:"starred"`
@@ -56,6 +65,12 @@ func NewEntry() *Entry {
 			Icon:     &FeedIcon{},
 		},
 	}
+}
+
+// HasScrapedContent returns true when Content was fetched from the original
+// web page, in which case Summary holds the content provided by the feed.
+func (e *Entry) HasScrapedContent() bool {
+	return e.Summary != ""
 }
 
 // ShouldMarkAsReadOnView Return whether the entry should be marked as viewed considering all user settings and entry state.

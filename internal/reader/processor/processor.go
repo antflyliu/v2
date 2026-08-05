@@ -126,7 +126,8 @@ func ProcessFeedEntries(store *storage.Storage, feed *model.Feed, userID int64, 
 				metric.ScraperRequestDuration.WithLabelValues(status).Observe(time.Since(startTime).Seconds())
 			}
 
-			if scraperErr != nil {
+			switch {
+			case scraperErr != nil:
 				slog.Warn("Unable to scrape entry",
 					slog.Int64("user_id", user.ID),
 					slog.String("entry_url", entry.URL),
@@ -134,10 +135,28 @@ func ProcessFeedEntries(store *storage.Storage, feed *model.Feed, userID int64, 
 					slog.String("feed_url", feed.FeedURL),
 					slog.Any("error", scraperErr),
 				)
-			} else if extractedContent != "" {
+			case extractedContent != "":
 				// We replace the entry content only if the scraper doesn't return any error.
+				// The content provided by the feed (usually a summary) is kept in a
+				// dedicated field instead of being discarded.
+				if entry.Summary == "" {
+					entry.Summary = entry.Content
+				}
 				entry.Content = minifyContent(extractedContent)
 				contentExtractedSuccessfully = true
+			default:
+				// The scraper succeeded but did not find any content: the page
+				// probably requires JavaScript or an authenticated session, or the
+				// scraper rules do not match anything. Keep the content provided by
+				// the feed and make the failure visible, otherwise the entry looks
+				// exactly like a feed that ships its full content.
+				slog.Warn("The scraper did not return any content, keeping the content provided by the feed",
+					slog.Int64("user_id", user.ID),
+					slog.String("entry_url", entry.URL),
+					slog.Int64("feed_id", feed.ID),
+					slog.String("feed_url", feed.FeedURL),
+					slog.String("scraper_rules", feed.ScraperRules),
+				)
 			}
 		}
 
@@ -164,6 +183,13 @@ func ProcessFeedEntries(store *storage.Storage, feed *model.Feed, userID int64, 
 		// The sanitizer should always run at the end of the process to make sure unsafe HTML is filtered out.
 		entry.Content = sanitizer.SanitizeHTML(webpageBaseURL, entry.Content, &sanitizer.SanitizerOptions{OpenLinksInNewTab: user.OpenExternalLinksInNewTab})
 
+		// The summary can be displayed to the user as well, so it must be
+		// sanitized too. Relative links are resolved against the entry URL
+		// because the summary comes from the feed and not from the scraped page.
+		if entry.Summary != "" {
+			entry.Summary = sanitizer.SanitizeHTML(entry.URL, entry.Summary, &sanitizer.SanitizerOptions{OpenLinksInNewTab: user.OpenExternalLinksInNewTab})
+		}
+
 		updateEntryReadingTime(store, feed, entry, entryIsNew, user)
 
 		filteredEntries = append(filteredEntries, entry)
@@ -180,6 +206,7 @@ func ProcessFeedEntries(store *storage.Storage, feed *model.Feed, userID int64, 
 func ProcessEntryWebPage(feed *model.Feed, entry *model.Entry, user *model.User) error {
 	startTime := time.Now()
 	entry.URL = rewrite.RewriteEntryURL(feed, entry)
+	feedContentBaseURL := entry.URL
 
 	requestBuilder := fetcher.NewRequestBuilder().
 		WithUserAgent(feed.UserAgent, config.Opts.HTTPClientUserAgent()).
@@ -211,10 +238,28 @@ func ProcessEntryWebPage(feed *model.Feed, entry *model.Entry, user *model.User)
 	}
 
 	if extractedContent != "" {
+		// Keep the content provided by the feed before the scraped content
+		// replaces it. The existing summary is preserved when the user fetches
+		// the original content more than once, otherwise the feed content would
+		// be replaced by a previously scraped content.
+		if entry.Summary == "" {
+			entry.Summary = sanitizer.SanitizeHTML(feedContentBaseURL, entry.Content, &sanitizer.SanitizerOptions{OpenLinksInNewTab: user.OpenExternalLinksInNewTab})
+		}
+
 		entry.Content = minifyContent(extractedContent)
 		if user.ShowReadingTime {
 			entry.ReadingTime = readingtime.EstimateReadingTime(entry.Content, user.DefaultReadingSpeed, user.CJKReadingSpeed)
 		}
+	} else {
+		// Same as in ProcessFeedEntries: an empty content means the scraper found
+		// nothing, so the feed content is kept as-is and no summary is recorded.
+		slog.Warn("The scraper did not return any content, keeping the content provided by the feed",
+			slog.Int64("user_id", user.ID),
+			slog.Int64("entry_id", entry.ID),
+			slog.String("entry_url", entry.URL),
+			slog.Int64("feed_id", feed.ID),
+			slog.String("scraper_rules", feed.ScraperRules),
+		)
 	}
 
 	rewrite.ApplyContentRewriteRules(entry, entry.Feed.RewriteRules)

@@ -259,6 +259,11 @@ type FeedCounters struct {
 type Feeds []*Feed
 
 // Entry represents a subscription item in the system.
+//
+// Content is the content to display (the scraped web page content when the
+// full content was fetched, the feed content otherwise) while Summary holds
+// the content provided by the feed and is only set when the scraped content
+// replaced it.
 type Entry struct {
 	ID          int64      `json:"id"`
 	Date        time.Time  `json:"published_at"`
@@ -271,6 +276,7 @@ type Entry struct {
 	Title       string     `json:"title"`
 	Status      string     `json:"status"`
 	Content     string     `json:"content"`
+	Summary     string     `json:"summary"`
 	Language    string     `json:"language"`
 	Author      string     `json:"author"`
 	ShareCode   string     `json:"share_code"`
