@@ -412,3 +412,63 @@ func TestNewBypassFromConfigNilSafe(t *testing.T) {
 		t.Fatal("nil Opts bypass should not be enabled")
 	}
 }
+
+// TestNewBypassNilCacheAppliesDefaultSkew verifies that constructing Bypass with a nil
+// cache opts into DefaultCacheSkew (60s). Near-expiry solve results must not be stored,
+// so a second challenge forces another solve.
+func TestNewBypassNilCacheAppliesDefaultSkew(t *testing.T) {
+	solver := &fakeSolver{
+		fn: func(ctx context.Context, req cloudflare.SolveRequest) (*cloudflare.SolveResponse, error) {
+			return &cloudflare.SolveResponse{
+				OK:        true,
+				UserAgent: "Solved-UA",
+				Cookies:   []cloudflare.Cookie{{Name: "cf_clearance", Value: "hot"}},
+				// Within DefaultCacheSkew (60s) → Set must refuse to cache.
+				ExpiresAt: time.Now().Add(30 * time.Second),
+			}, nil
+		},
+	}
+	// nil cache → NewBypass must install defaults including DefaultCacheSkew.
+	b := cloudflare.NewBypass(solver, nil, "http://127.0.0.1:8191", true, time.Minute)
+
+	doCFThenOK := func() {
+		t.Helper()
+		var doCalls atomic.Int32
+		resp, err := b.DoRequest(
+			context.Background(),
+			"https://www.example.com/feed",
+			"direct",
+			"",
+			cloudflare.Policy{},
+			"",
+			"",
+			func(cookie, ua string) (*http.Response, error) {
+				n := doCalls.Add(1)
+				if n == 1 {
+					return challengeResponse(), nil
+				}
+				return okResponse("rss"), nil
+			},
+		)
+		if err != nil {
+			t.Fatalf("DoRequest error: %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d want 200", resp.StatusCode)
+		}
+		if doCalls.Load() != 2 {
+			t.Fatalf("do calls = %d want 2", doCalls.Load())
+		}
+	}
+
+	doCFThenOK()
+	if solver.calls.Load() != 1 {
+		t.Fatalf("solver calls after first request = %d want 1", solver.calls.Load())
+	}
+
+	// Second challenge must solve again: near-expiry entry was not cached under default skew.
+	doCFThenOK()
+	if solver.calls.Load() != 2 {
+		t.Fatalf("solver calls after second request = %d want 2 (near-expiry must not be cached)", solver.calls.Load())
+	}
+}

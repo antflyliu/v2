@@ -37,10 +37,15 @@ type Bypass struct {
 }
 
 // NewBypass constructs a Bypass with the given dependencies.
-// A nil cache is replaced with a default in-process cache.
+// A nil cache is replaced with a default in-process cache (DefaultTTL/MaxTTL/Skew).
 func NewBypass(solver Solver, cache *Cache, bypassURL string, enabled bool, timeout time.Duration) *Bypass {
 	if cache == nil {
-		cache = NewCache(CacheOptions{})
+		// Skew must be set explicitly: NewCache treats Skew==0 as "no early expiry".
+		cache = NewCache(CacheOptions{
+			DefaultTTL: DefaultCacheTTL,
+			Skew:       DefaultCacheSkew,
+			MaxTTL:     DefaultCacheMaxTTL,
+		})
 	}
 	return &Bypass{
 		client:  solver,
@@ -55,12 +60,17 @@ func NewBypass(solver Solver, cache *Cache, bypassURL string, enabled bool, time
 // Safe when config.Opts is nil (tests): returns a disabled bypass with an empty cache.
 func NewBypassFromConfig() *Bypass {
 	if config.Opts == nil {
-		return NewBypass(nil, NewCache(CacheOptions{}), "", false, 0)
+		return NewBypass(nil, nil, "", false, 0)
 	}
 	bypassURL := config.Opts.CloudflareBypassURL()
 	return NewBypass(
 		&Client{BaseURL: bypassURL},
-		NewCache(CacheOptions{DefaultTTL: config.Opts.CloudflareBypassCacheTTL()}),
+		NewCache(CacheOptions{
+			DefaultTTL: config.Opts.CloudflareBypassCacheTTL(),
+			// Skew must be set explicitly: NewCache treats Skew==0 as "no early expiry".
+			Skew:   DefaultCacheSkew,
+			MaxTTL: DefaultCacheMaxTTL,
+		}),
 		bypassURL,
 		config.Opts.CloudflareBypassEnabled(),
 		config.Opts.CloudflareBypassTimeout(),
