@@ -52,7 +52,7 @@ func executeFeedRequest(requestBuilder *fetcher.RequestBuilder, requestURL, cook
 		requestBuilder = requestBuilder.WithLockedProxyURL(proxyURL)
 	}
 
-	bypass := cloudflare.NewBypassFromConfig()
+	bypass := cloudflare.Default()
 	policy := cloudflare.Policy{FeedOverride: feedOverride}
 
 	var httpResp *http.Response

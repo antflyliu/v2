@@ -10,10 +10,26 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"miniflux.app/v2/internal/config"
 )
+
+var (
+	defaultBypass     *Bypass
+	defaultBypassOnce sync.Once
+)
+
+// Default returns a process-scoped Bypass built from config once.
+// Safe for concurrent use; Cache already uses its own locking.
+// Clearance entries therefore survive across Create/Refresh feed fetches.
+func Default() *Bypass {
+	defaultBypassOnce.Do(func() {
+		defaultBypass = NewBypassFromConfig()
+	})
+	return defaultBypass
+}
 
 // Policy controls per-request bypass enablement relative to global config.
 type Policy struct {
