@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -79,8 +80,14 @@ func NewBypassFromConfig() *Bypass {
 		return NewBypass(nil, nil, "", false, 0)
 	}
 	bypassURL := config.Opts.CloudflareBypassURL()
+	timeout := config.Opts.CloudflareBypassTimeout()
+	client := &Client{BaseURL: bypassURL}
+	if timeout > 0 {
+		// Grace so the HTTP client does not race the request/context deadline.
+		client.HTTPClient = &http.Client{Timeout: timeout + 5*time.Second}
+	}
 	return NewBypass(
-		&Client{BaseURL: bypassURL},
+		client,
 		NewCache(CacheOptions{
 			DefaultTTL: config.Opts.CloudflareBypassCacheTTL(),
 			// Skew must be set explicitly: NewCache treats Skew==0 as "no early expiry".
@@ -89,7 +96,7 @@ func NewBypassFromConfig() *Bypass {
 		}),
 		bypassURL,
 		config.Opts.CloudflareBypassEnabled(),
-		config.Opts.CloudflareBypassTimeout(),
+		timeout,
 	)
 }
 
@@ -144,12 +151,25 @@ func (b *Bypass) DoRequest(
 			ua = ent.UserAgent
 		}
 		appliedCache = true
+		slog.Info("cloudflare bypass cache hit",
+			slog.String("component", "cloudflare_bypass"),
+			slog.String("event", "cache_hit"),
+			slog.String("host", host),
+			slog.String("proxy", proxyKey),
+		)
 	}
 
 	resp, err := do(cookie, ua)
 	if err != nil || !IsChallenge(resp) {
 		return resp, err
 	}
+
+	slog.Info("cloudflare bypass challenge detected",
+		slog.String("component", "cloudflare_bypass"),
+		slog.String("event", "challenge_detected"),
+		slog.String("host", host),
+		slog.String("proxy", proxyKey),
+	)
 
 	// Challenge path: drop stale cache entry that was applied for this attempt.
 	if appliedCache {
@@ -160,9 +180,23 @@ func (b *Bypass) DoRequest(
 		return b.solveToEntry(ctx, requestURL, proxyForSolver)
 	})
 	if solveErr != nil {
+		slog.Info("cloudflare bypass solve error",
+			slog.String("component", "cloudflare_bypass"),
+			slog.String("event", "solve_err"),
+			slog.String("host", host),
+			slog.String("proxy", proxyKey),
+			slog.Any("error", solveErr),
+		)
 		// Caller maps the original CF response to a localized error.
 		return resp, nil
 	}
+
+	slog.Info("cloudflare bypass solve ok",
+		slog.String("component", "cloudflare_bypass"),
+		slog.String("event", "solve_ok"),
+		slog.String("host", host),
+		slog.String("proxy", proxyKey),
+	)
 
 	// Discard first body before retry to avoid connection leaks.
 	drainAndClose(resp)
@@ -178,6 +212,19 @@ func (b *Bypass) DoRequest(
 	}
 	if IsChallenge(resp2) {
 		b.cache.Invalidate(key)
+		slog.Info("cloudflare bypass retry still challenged",
+			slog.String("component", "cloudflare_bypass"),
+			slog.String("event", "retry_fail"),
+			slog.String("host", host),
+			slog.String("proxy", proxyKey),
+		)
+	} else {
+		slog.Info("cloudflare bypass retry ok",
+			slog.String("component", "cloudflare_bypass"),
+			slog.String("event", "retry_ok"),
+			slog.String("host", host),
+			slog.String("proxy", proxyKey),
+		)
 	}
 	return resp2, nil
 }
@@ -185,6 +232,11 @@ func (b *Bypass) DoRequest(
 func (b *Bypass) solveToEntry(ctx context.Context, requestURL, proxyForSolver string) (CacheEntry, error) {
 	if b.client == nil {
 		return CacheEntry{}, fmt.Errorf("cloudflare: solver is nil")
+	}
+	if b.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, b.timeout)
+		defer cancel()
 	}
 	sol, err := b.client.Solve(ctx, SolveRequest{
 		WebsiteURL: requestURL,

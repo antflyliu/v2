@@ -165,12 +165,14 @@ func (g *singleflight) Do(key string, fn func() (CacheEntry, error)) (v CacheEnt
 	g.m[key] = c
 	g.mu.Unlock()
 
+	// Always unblock waiters and drop the in-flight entry, even if fn panics.
+	defer func() {
+		c.wg.Done()
+		g.mu.Lock()
+		delete(g.m, key)
+		g.mu.Unlock()
+	}()
 	c.val, c.err = fn()
-	c.wg.Done()
-
-	g.mu.Lock()
-	delete(g.m, key)
-	g.mu.Unlock()
 
 	return c.val, c.err, false
 }

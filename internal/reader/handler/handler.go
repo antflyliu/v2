@@ -124,7 +124,10 @@ func CreateFeedFromSubscriptionDiscovery(store *storage.Storage, userID int64, f
 	subscription.DisableHTTP2 = feedCreationRequest.DisableHTTP2
 	subscription.WithCategoryID(feedCreationRequest.CategoryID)
 	subscription.ProxyURL = feedCreationRequest.ProxyURL
-	subscription.CloudflareBypass = feedCreationRequest.CloudflareBypass
+	if feedCreationRequest.CloudflareBypass != nil {
+		v := *feedCreationRequest.CloudflareBypass
+		subscription.CloudflareBypass = &v
+	}
 	subscription.CheckedNow()
 
 	processor.ProcessFeedEntries(store, subscription, userID, true)
@@ -222,7 +225,10 @@ func CreateFeed(store *storage.Storage, userID int64, feedCreationRequest *model
 	subscription.LastModifiedHeader = responseHandler.LastModified()
 	subscription.FeedURL = responseHandler.EffectiveURL()
 	subscription.ProxyURL = feedCreationRequest.ProxyURL
-	subscription.CloudflareBypass = feedCreationRequest.CloudflareBypass
+	if feedCreationRequest.CloudflareBypass != nil {
+		v := *feedCreationRequest.CloudflareBypass
+		subscription.CloudflareBypass = &v
+	}
 	subscription.WithCategoryID(feedCreationRequest.CategoryID)
 	subscription.CheckedNow()
 

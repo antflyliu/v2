@@ -273,3 +273,46 @@ func TestGetOrSolveReturnsEntryEvenIfTooShortToCache(t *testing.T) {
 		t.Fatal("expected miss: short-lived solve result must not be cached")
 	}
 }
+
+func TestGetOrSolvePanicUnblocksWaiters(t *testing.T) {
+	c := newTestCache()
+	key := cloudflare.CacheKey("www.example.com", "direct")
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer func() {
+			_ = recover()
+		}()
+		_, _ = c.GetOrSolve(key, func() (cloudflare.CacheEntry, error) {
+			panic("boom")
+		})
+	}()
+
+	// Waiter must not hang after the owner panics.
+	waitDone := make(chan struct{})
+	go func() {
+		defer close(waitDone)
+		_, err := c.GetOrSolve(key, func() (cloudflare.CacheEntry, error) {
+			return cloudflare.CacheEntry{
+				CookieHeader: "cf_clearance=after-panic",
+				UserAgent:    "UA",
+				ExpiresAt:    time.Now().Add(10 * time.Minute),
+			}, nil
+		})
+		if err != nil {
+			t.Errorf("waiter GetOrSolve error: %v", err)
+		}
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("owner did not finish after panic")
+	}
+	select {
+	case <-waitDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("waiter blocked after panicking solve; Done not panic-safe")
+	}
+}
