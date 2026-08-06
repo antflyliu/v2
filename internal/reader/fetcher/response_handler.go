@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"miniflux.app/v2/internal/locale"
+	"miniflux.app/v2/internal/reader/cloudflare"
 )
 
 type ResponseHandler struct {
@@ -233,13 +234,7 @@ func (r *ResponseHandler) LocalizedError() *locale.LocalizedErrorWrapper {
 // relies on response headers only (no body read) to keep the check cheap and
 // to run before ReadBody is called.
 func (r *ResponseHandler) isCloudflareChallenge() bool {
-	if r.httpResponse == nil {
-		return false
-	}
-
-	return r.httpResponse.StatusCode == http.StatusForbidden &&
-		strings.EqualFold(r.httpResponse.Header.Get("cf-mitigated"), "challenge") &&
-		strings.HasPrefix(strings.ToLower(r.ContentType()), "text/html")
+	return cloudflare.IsChallenge(r.httpResponse)
 }
 
 func isNetworkError(err error) bool {
