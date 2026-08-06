@@ -154,6 +154,32 @@ func NewConfigOptions() *configOptions {
 				rawValue:       "30",
 				valueType:      dayType,
 			},
+			"CLOUDFLARE_BYPASS_CACHE_TTL": {
+				parsedDuration: 25 * time.Minute,
+				rawValue:       "25",
+				valueType:      minuteType,
+				validator: func(rawValue string) error {
+					return validateGreaterThan(rawValue, 0)
+				},
+			},
+			"CLOUDFLARE_BYPASS_ENABLED": {
+				parsedBoolValue: false,
+				rawValue:        "0",
+				valueType:       boolType,
+			},
+			"CLOUDFLARE_BYPASS_TIMEOUT": {
+				parsedDuration: 60 * time.Second,
+				rawValue:       "60",
+				valueType:      secondType,
+				validator: func(rawValue string) error {
+					return validateGreaterOrEqualThan(rawValue, 1)
+				},
+			},
+			"CLOUDFLARE_BYPASS_URL": {
+				parsedStringValue: "",
+				rawValue:          "",
+				valueType:         stringType,
+			},
 			"CREATE_ADMIN": {
 				parsedBoolValue: false,
 				rawValue:        "0",
@@ -678,6 +704,22 @@ func (c *configOptions) CleanupFrequency() time.Duration {
 
 func (c *configOptions) CleanupRemoveSessionsInterval() time.Duration {
 	return c.options["CLEANUP_REMOVE_SESSIONS_DAYS"].parsedDuration
+}
+
+func (c *configOptions) CloudflareBypassCacheTTL() time.Duration {
+	return c.options["CLOUDFLARE_BYPASS_CACHE_TTL"].parsedDuration
+}
+
+func (c *configOptions) CloudflareBypassEnabled() bool {
+	return c.options["CLOUDFLARE_BYPASS_ENABLED"].parsedBoolValue
+}
+
+func (c *configOptions) CloudflareBypassTimeout() time.Duration {
+	return c.options["CLOUDFLARE_BYPASS_TIMEOUT"].parsedDuration
+}
+
+func (c *configOptions) CloudflareBypassURL() string {
+	return c.options["CLOUDFLARE_BYPASS_URL"].parsedStringValue
 }
 
 func (c *configOptions) CreateAdmin() bool {
