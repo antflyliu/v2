@@ -13,6 +13,7 @@ import (
 	"miniflux.app/v2/internal/metric"
 	"miniflux.app/v2/internal/model"
 	"miniflux.app/v2/internal/proxyrotator"
+	"miniflux.app/v2/internal/reader/cloudflare"
 	"miniflux.app/v2/internal/reader/fetcher"
 	"miniflux.app/v2/internal/reader/filter"
 	"miniflux.app/v2/internal/reader/readingtime"
@@ -112,6 +113,9 @@ func ProcessFeedEntries(store *storage.Storage, feed *model.Feed, userID int64, 
 				requestBuilder,
 				entry.URL,
 				feed.ScraperRules,
+				cloudflare.Policy{FeedOverride: feed.CloudflareBypass},
+				feed.Cookie,
+				feed.UserAgent,
 			)
 
 			if scrapedPageBaseURL != "" {
@@ -223,6 +227,9 @@ func ProcessEntryWebPage(feed *model.Feed, entry *model.Entry, user *model.User)
 		requestBuilder,
 		entry.URL,
 		feed.ScraperRules,
+		cloudflare.Policy{FeedOverride: feed.CloudflareBypass},
+		feed.Cookie,
+		feed.UserAgent,
 	)
 
 	if config.Opts.HasMetricsCollector() {
