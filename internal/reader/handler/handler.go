@@ -5,8 +5,10 @@ package handler // import "miniflux.app/v2/internal/reader/handler"
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"miniflux.app/v2/internal/config"
@@ -14,6 +16,7 @@ import (
 	"miniflux.app/v2/internal/locale"
 	"miniflux.app/v2/internal/model"
 	"miniflux.app/v2/internal/proxyrotator"
+	"miniflux.app/v2/internal/reader/cloudflare"
 	"miniflux.app/v2/internal/reader/fetcher"
 	"miniflux.app/v2/internal/reader/icon"
 	"miniflux.app/v2/internal/reader/parser"
@@ -35,6 +38,46 @@ func getTranslatedLocalizedError(store *storage.Storage, userID int64, originalF
 	originalFeed.WithTranslatedErrorMessage(localizedError.Translate(user.Language))
 	store.UpdateFeedError(originalFeed)
 	return localizedError
+}
+
+// executeFeedRequest resolves a sticky proxy once, then either runs the Cloudflare
+// bypass orchestrator or falls back to a direct ExecuteRequest when bypass is off.
+func executeFeedRequest(requestBuilder *fetcher.RequestBuilder, requestURL, cookie, userAgent string, feedOverride *bool) *fetcher.ResponseHandler {
+	proxyURL, proxyErr := requestBuilder.ResolveProxyURL()
+	proxyKey := "direct"
+	proxyForSolver := ""
+	if proxyErr == nil && proxyURL != nil {
+		proxyKey = proxyURL.Redacted()
+		proxyForSolver = proxyURL.String()
+		requestBuilder = requestBuilder.WithLockedProxyURL(proxyURL)
+	}
+
+	bypass := cloudflare.NewBypassFromConfig()
+	policy := cloudflare.Policy{FeedOverride: feedOverride}
+
+	var httpResp *http.Response
+	var clientErr error
+	if bypass.Enabled(policy) {
+		httpResp, clientErr = bypass.DoRequest(
+			context.Background(),
+			requestURL,
+			proxyKey,
+			proxyForSolver,
+			policy,
+			cookie,
+			userAgent,
+			func(cookie, ua string) (*http.Response, error) {
+				b := requestBuilder.Clone().
+					WithCookie(cookie).
+					WithUserAgent(ua, config.Opts.HTTPClientUserAgent())
+				return b.ExecuteRequest(requestURL)
+			},
+		)
+	} else {
+		httpResp, clientErr = requestBuilder.ExecuteRequest(requestURL)
+	}
+
+	return fetcher.NewResponseHandler(httpResp, clientErr)
 }
 
 func CreateFeedFromSubscriptionDiscovery(store *storage.Storage, userID int64, feedCreationRequest *model.FeedCreationRequestFromSubscriptionDiscovery) (*model.Feed, *locale.LocalizedErrorWrapper) {
@@ -125,7 +168,13 @@ func CreateFeed(store *storage.Storage, userID int64, feedCreationRequest *model
 		IgnoreTLSErrors(feedCreationRequest.AllowSelfSignedCertificates).
 		DisableHTTP2(feedCreationRequest.DisableHTTP2)
 
-	responseHandler := fetcher.NewResponseHandler(requestBuilder.ExecuteRequest(feedCreationRequest.FeedURL))
+	responseHandler := executeFeedRequest(
+		requestBuilder,
+		feedCreationRequest.FeedURL,
+		feedCreationRequest.Cookie,
+		feedCreationRequest.UserAgent,
+		feedCreationRequest.CloudflareBypass,
+	)
 	defer responseHandler.Close()
 
 	if localizedError := responseHandler.LocalizedError(); localizedError != nil {
@@ -242,7 +291,13 @@ func RefreshFeed(store *storage.Storage, userID, feedID int64, forceRefresh bool
 			WithLastModified(originalFeed.LastModifiedHeader)
 	}
 
-	responseHandler := fetcher.NewResponseHandler(requestBuilder.ExecuteRequest(originalFeed.FeedURL))
+	responseHandler := executeFeedRequest(
+		requestBuilder,
+		originalFeed.FeedURL,
+		originalFeed.Cookie,
+		originalFeed.UserAgent,
+		originalFeed.CloudflareBypass,
+	)
 	defer responseHandler.Close()
 
 	if responseHandler.IsRateLimited() {
