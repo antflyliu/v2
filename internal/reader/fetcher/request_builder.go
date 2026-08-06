@@ -44,6 +44,7 @@ type RequestBuilder struct {
 	disableCompression bool
 	proxyRotator       *proxyrotator.ProxyRotator
 	feedProxyURL       string
+	lockedProxyURL     *url.URL
 }
 
 func NewRequestBuilder() *RequestBuilder {
@@ -124,6 +125,33 @@ func (r *RequestBuilder) WithCustomFeedProxyURL(proxyURL string) *RequestBuilder
 	return r
 }
 
+// WithLockedProxyURL pins the proxy used by ExecuteRequest so retries reuse the
+// same hop and do not advance the proxy rotator.
+func (r *RequestBuilder) WithLockedProxyURL(u *url.URL) *RequestBuilder {
+	r.lockedProxyURL = u
+	return r
+}
+
+// ResolveProxyURL returns the proxy that would be used for the next request,
+// following feed proxy → application proxy → rotator priority. Calling this
+// may advance the rotator when that path is selected.
+func (r *RequestBuilder) ResolveProxyURL() (*url.URL, error) {
+	switch {
+	case r.feedProxyURL != "":
+		clientProxyURL, err := url.Parse(r.feedProxyURL)
+		if err != nil {
+			return nil, fmt.Errorf(`fetcher: invalid feed proxy URL %q: %w`, r.feedProxyURL, err)
+		}
+		return clientProxyURL, nil
+	case r.useClientProxy && r.clientProxyURL != nil:
+		return r.clientProxyURL, nil
+	case r.proxyRotator != nil && r.proxyRotator.HasProxies():
+		return r.proxyRotator.GetNextProxy(), nil
+	}
+
+	return nil, nil
+}
+
 func (r *RequestBuilder) WithTimeout(timeout time.Duration) *RequestBuilder {
 	r.clientTimeout = timeout
 	return r
@@ -151,18 +179,14 @@ func (r *RequestBuilder) WithoutCompression() *RequestBuilder {
 
 func (r *RequestBuilder) ExecuteRequest(requestURL string) (*http.Response, error) {
 	var clientProxyURL *url.URL
-
-	switch {
-	case r.feedProxyURL != "":
+	if r.lockedProxyURL != nil {
+		clientProxyURL = r.lockedProxyURL
+	} else {
 		var err error
-		clientProxyURL, err = url.Parse(r.feedProxyURL)
+		clientProxyURL, err = r.ResolveProxyURL()
 		if err != nil {
-			return nil, fmt.Errorf(`fetcher: invalid feed proxy URL %q: %w`, r.feedProxyURL, err)
+			return nil, err
 		}
-	case r.useClientProxy && r.clientProxyURL != nil:
-		clientProxyURL = r.clientProxyURL
-	case r.proxyRotator != nil && r.proxyRotator.HasProxies():
-		clientProxyURL = r.proxyRotator.GetNextProxy()
 	}
 
 	directDialer := &net.Dialer{
