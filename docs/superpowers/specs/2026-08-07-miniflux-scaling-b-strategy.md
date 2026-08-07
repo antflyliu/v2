@@ -107,6 +107,10 @@ SCHEDULER_ENTRY_FREQUENCY_MAX_INTERVAL=720
 
 HTTP_CLIENT_TIMEOUT=90
 
+# 代理：生产双层 —— 全局轮换（下）+ 问题域/P0 用 feed.proxy_url（上）
+HTTP_CLIENT_PROXIES=http://u:p@res1:port,http://u:p@res2:port,http://u:p@res3:port
+# HTTP_CLIENT_PROXY=   # 5000 源主路径不要依赖单全局代理
+
 # CF bypass（已实现）
 CLOUDFLARE_BYPASS_ENABLED=1
 CLOUDFLARE_BYPASS_URL=http://127.0.0.1:5072
@@ -118,7 +122,8 @@ CLOUDFLARE_BYPASS_CACHE_TTL=25
 
 - `HTTP_CLIENT_TIMEOUT` 建议 **45–90s**，避免单 feed 占死 worker 5 分钟（当前 300s 偏松，扩量后改为 90 更利于吞吐）。
 - `BATCH_SIZE` 与 `POLLING_FREQUENCY` 共同决定调度吞吐；只加 worker 不提高 due 供给会空转。
-- `WORKER_POOL_SIZE` **无代理池时不要盲目 >10**，同域 429 风险上升。
+- `WORKER_POOL_SIZE` **无代理池或池质量差时不要盲目 >10**；有稳定多出口后再 12–16。
+- 代理细节见 §5.1（生产默认双层，非三级独立池）。
 
 ### 4.3 吞吐验算（阶段 3 示例）
 
@@ -130,26 +135,82 @@ CLOUDFLARE_BYPASS_CACHE_TTL=25
 
 ## 5. 代理与 Cloudflare 容量
 
-### 5.1 代理
+### 5.1 生产推荐：双层代理（全局轮换 + 问题域/P0 固定）
 
-| 阶段 | 建议 |
+**决策（生产默认）：** 不做「P0/P1/P2 三套独立代理池」产品；用 Miniflux **现有**能力实现「又稳又快」：
+
+| 层 | 机制 | 配置位置 | 谁用 |
+|----|------|----------|------|
+| L1 全局轮换池 | `HTTP_CLIENT_PROXIES` 逗号列表 → `ProxyRotator` round-robin | 环境变量 / `.env` | **默认**：P1 普通源、P2 冷源、未单独指定代理的源 |
+| L2 单源固定出口 | Feed 字段 `proxy_url`（优先级最高） | 订阅源编辑 / API | **P0 热源**、**已知易 429/CF 域名**（同域多 feed **共用同一 URL**） |
+| （可选）L0 单全局代理 | `HTTP_CLIENT_PROXY` + feed `fetch_via_proxy` | env + feed | 仅适合「全家一个出口」的小规模；**5000 源不推荐作为主路径** |
+
+解析顺序（已实现，含 sticky lock）：  
+`feed.proxy_url` → (`fetch_via_proxy` + `HTTP_CLIENT_PROXY`) → `HTTP_CLIENT_PROXIES` 轮换 → 直连。
+
+#### 为什么这是「又稳又快」的默认
+
+| 目标 | 做法 |
 |------|------|
-| 0–1 | 至少可用出口；同域 sticky |
-| 2–3 | 多出口池（住宅/ISP 优先于机房 IP）；按域名分散 |
+| **稳（防 429）** | 多数流量走多出口轮换，避免单机房 IP 被集中限流；问题域不靠加 `WORKER` 硬刚 |
+| **快（热源/CF）** | P0 与易 CF 域 **固定优质出口** → 同 host+proxy 的 clearance **缓存命中率高**，少打 Camoufox，体感更快 |
+| **运维成本** | 不维护三套池；只维护「一份全局列表 + 少数 feed 的 proxy_url」 |
+| **与现网一致** | 无需新配置项、无新 UI；扩量期即可落地 |
+
+#### 明确不做（v1）
+
+- 无 `HTTP_CLIENT_PROXIES_P0` / 多池 env。  
+- 无「按域名自动粘滞选路」全局逻辑（仅有：单次请求 resolve 后 lock；以及人工同域同 `proxy_url`）。  
+- 无「429 后自动换下一个代理再试同一逻辑请求」（失败靠 next_check 退避；换出口靠人工改 `proxy_url` 或等下次轮换）。
+
+若未来 429 仍系统性爆炸，再单独立项：域名→代理映射或 429 换出口重试。
+
+#### 生产配置示例
+
+```env
+# L1：全局轮换（P1/P2 默认）。住宅/ISP 优先于廉价机房。
+# 阶段 0–1：3～5 条；阶段 2–3：8～20 条量级（按预算与 429 情况加）
+HTTP_CLIENT_PROXIES=http://u:p@res1:port,http://u:p@res2:port,http://u:p@res3:port
+
+# 一般不要再设 HTTP_CLIENT_PROXY 与池「抢语义」；主路径用 PROXIES 即可。
+# HTTP_CLIENT_PROXY=
+
+WORKER_POOL_SIZE=10   # 有稳定池后再 12–16；无池或池很差时 ≤8
+```
+
+Feed 侧（运营）：
+
+| 场景 | 配置 |
+|------|------|
+| 多个 `linux.do` / 同站多 feed | **相同** `proxy_url`（同一优质出口） |
+| P0 热源且源站敏感 | 独立或共享优质 `proxy_url`；勿与劣质轮换混用 |
+| 普通 RSS（无 CF、少 429） | 不填 `proxy_url`，吃 `HTTP_CLIENT_PROXIES` |
+| 冷源、公开 CDN | 可不走代理（不填 + 若轮换会命中池则仍走池；若需直连需保证未进强制代理路径） |
+
+#### 容量与阶段
+
+| 阶段 | 源数量 | 全局池规模（量级） | Worker | 备注 |
+|------|--------|--------------------|--------|------|
+| 0 | ~66 | 1～3 出口即可验证 | 6–8 | 先固定 linux.do 等 `proxy_url` 消 429 |
+| 1 | ~500 | 3～5 | 8–10 | 池质量 > 数量 |
+| 2 | ~2000 | 5～10 | 10–12 | 观察 429 再加出口，勿只加 worker |
+| 3 | ~5000 | 8～20 | 12–16 | 出口不够时优先加代理，不优先加到 32 worker |
 
 原则：
 
-- 业务请求与 clearance solve **同一 proxy**（已实现 sticky）。
-- 缓存 key = host + redacted proxy → 不同出口各自 clearance。
-- 429 时优先换出口或拉长该域间隔，而不是加大全局 worker。
+- 业务请求与 clearance solve **同一 proxy**（sticky，已实现）。  
+- 缓存 key = host + redacted(proxy) → **同域同 proxy_url 才能共享 clearance**。  
+- 429 时：**降该域压力 / 换该域固定出口 / 降 worker**，而不是无限加大 `WORKER_POOL_SIZE`。  
+- 代理质量：易 429 与 CF 站优先 **住宅或 ISP**；纯机房 IP 只给低风险 P1/P2。
 
 ### 5.2 camoufox-turnstile
 
 | 项 | 建议 |
 |----|------|
-| `max_browsers` | 1（阶段 0–1）；CF 源占比高时 2 |
+| `max_browsers` | 1（阶段 0–1）；CF 源占比高或 solve 排队明显时 2 |
 | `queue_size` | ≥ 32 |
 | `solve_timeout_sec` | ≥ Miniflux `CLOUDFLARE_BYPASS_TIMEOUT` |
+| `proxy`（config.json） | 仅作任务未带 proxy 时的 fallback；生产以 Miniflux sticky 为准 |
 | `headless` | 先 true；失败再按 ops 文档排查 |
 
 Clearance **不写** `feeds.cookie`；进程内缓存 TTL 默认 25m。
@@ -212,7 +273,7 @@ Clearance **不写** `feeds.cookie`；进程内缓存 TTL 默认 25m。
 
 ## 10. 开放问题（实现前可确认）
 
-1. 代理池现状：是否已有可轮换出口？数量级？  
+1. ~~代理形态~~ → **已定**：双层（`HTTP_CLIENT_PROXIES` + P0/问题域 `proxy_url`）。待确认的是**你现有出口数量与类型**（住宅/机房）。  
 2. 5000 源中预估 CF 挑战占比？  
 3. P0 热源预计数量级（几十 / 几百）？  
 4. 是否接受将 `HTTP_CLIENT_TIMEOUT` 从 300 降到 90？
@@ -224,3 +285,4 @@ Clearance **不写** `feeds.cookie`；进程内缓存 TTL 默认 25m。
 | 日期 | 变更 |
 |------|------|
 | 2026-08-07 | 初稿：策略 B 分层实时配置设计（用户选定 B） |
+| 2026-08-07 | §5.1 定为生产双层代理；否定 v1 多级独立代理池 |
