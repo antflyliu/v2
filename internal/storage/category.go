@@ -29,11 +29,16 @@ func (s *Storage) CategoryTitleExists(userID int64, title string) bool {
 }
 
 // CategoryIDExists checks if the given category exists into the database.
-func (s *Storage) CategoryIDExists(userID, categoryID int64) bool {
+// The returned error is non-nil only for a genuine query/connection failure;
+// a category that doesn't exist is reported as (false, nil), matching the
+// underlying sql.ErrNoRows case.
+func (s *Storage) CategoryIDExists(userID, categoryID int64) (bool, error) {
 	var result bool
 	query := `SELECT true FROM categories WHERE user_id=$1 AND id=$2 LIMIT 1`
-	s.db.QueryRow(query, userID, categoryID).Scan(&result)
-	return result
+	if err := s.db.QueryRow(query, userID, categoryID).Scan(&result); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, fmt.Errorf(`store: unable to check if category exists: %w`, err)
+	}
+	return result, nil
 }
 
 // Category returns a category from the database.
