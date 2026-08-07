@@ -112,3 +112,9 @@ HTTP_CLIENT_TIMEOUT=90
 3. 逐个设置相同 `proxy_url`。
 4. 等待自然 next_check，**不要**立即「刷新全部」。
 5. 1 小时后看错误是否从「过多请求」下降。
+
+## 9. 阶段 0 验收记录
+
+| 日期 | 结果 | 备注 |
+|------|------|------|
+| 2026-08-07 | OFFLINE PASS; runtime operator pending | Docs/spec/secret-scan/config tests OK; Step 4 live 429/runtime not claimed |
