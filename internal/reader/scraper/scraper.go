@@ -4,12 +4,15 @@
 package scraper // import "miniflux.app/v2/internal/reader/scraper"
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 
 	"miniflux.app/v2/internal/config"
+	"miniflux.app/v2/internal/reader/cloudflare"
 	"miniflux.app/v2/internal/reader/encoding"
 	"miniflux.app/v2/internal/reader/fetcher"
 	"miniflux.app/v2/internal/reader/readability"
@@ -18,8 +21,45 @@ import (
 	"github.com/PuerkitoBio/goquery"
 )
 
-func ScrapeWebsite(requestBuilder *fetcher.RequestBuilder, pageURL, rules string) (baseURL string, extractedContent string, err error) {
-	responseHandler := fetcher.NewResponseHandler(requestBuilder.ExecuteRequest(pageURL))
+// ScrapeWebsite downloads pageURL and extracts content using scraper rules or readability.
+// When Cloudflare bypass is enabled for policy, clearance cookies are applied (and solved
+// on challenge) with a sticky proxy for retries. cookie/userAgent are the feed-level
+// defaults passed into Bypass.DoRequest for clearance merge.
+func ScrapeWebsite(requestBuilder *fetcher.RequestBuilder, pageURL, rules string, policy cloudflare.Policy, cookie, userAgent string) (baseURL string, extractedContent string, err error) {
+	proxyURL, proxyErr := requestBuilder.ResolveProxyURL()
+	proxyKey := "direct"
+	proxyForSolver := ""
+	if proxyErr == nil && proxyURL != nil {
+		proxyKey = proxyURL.Redacted()
+		proxyForSolver = proxyURL.String()
+		requestBuilder = requestBuilder.WithLockedProxyURL(proxyURL)
+	}
+
+	bypass := cloudflare.Default()
+
+	var httpResp *http.Response
+	var clientErr error
+	if bypass.Enabled(policy) {
+		httpResp, clientErr = bypass.DoRequest(
+			context.Background(),
+			pageURL,
+			proxyKey,
+			proxyForSolver,
+			policy,
+			cookie,
+			userAgent,
+			func(cookie, ua string) (*http.Response, error) {
+				b := requestBuilder.Clone().
+					WithCookie(cookie).
+					WithUserAgent(ua, config.Opts.HTTPClientUserAgent())
+				return b.ExecuteRequest(pageURL)
+			},
+		)
+	} else {
+		httpResp, clientErr = requestBuilder.ExecuteRequest(pageURL)
+	}
+
+	responseHandler := fetcher.NewResponseHandler(httpResp, clientErr)
 	defer responseHandler.Close()
 
 	if localizedError := responseHandler.LocalizedError(); localizedError != nil {

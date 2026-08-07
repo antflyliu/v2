@@ -51,6 +51,14 @@ var forkMigrations = []func(tx *sql.Tx) error{
 		_, err = tx.Exec(`ALTER TABLE entries ALTER COLUMN summary SET NOT NULL;`)
 		return err
 	},
+	func(tx *sql.Tx) (err error) {
+		// Per-feed Cloudflare bypass override:
+		// NULL = follow global config; true/false = force enable/disable.
+		// IF NOT EXISTS keeps the migration idempotent if the column was
+		// created manually before this migration landed.
+		_, err = tx.Exec(`ALTER TABLE feeds ADD COLUMN IF NOT EXISTS cloudflare_bypass boolean;`)
+		return err
+	},
 }
 
 // allMigrations is the complete ordered list of migrations: upstream ones

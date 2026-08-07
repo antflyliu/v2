@@ -292,6 +292,78 @@ func TestCleanupArchiveBatchSizeOptionParsing(t *testing.T) {
 	}
 }
 
+func TestCloudflareBypassURLOptionParsing(t *testing.T) {
+	configParser := NewConfigParser()
+
+	if configParser.options.CloudflareBypassURL() != "" {
+		t.Fatalf("Expected CLOUDFLARE_BYPASS_URL to be empty by default")
+	}
+
+	if err := configParser.parseLines([]string{"CLOUDFLARE_BYPASS_URL=http://127.0.0.1:8191"}); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if configParser.options.CloudflareBypassURL() != "http://127.0.0.1:8191" {
+		t.Fatalf("Expected CLOUDFLARE_BYPASS_URL to be 'http://127.0.0.1:8191', got '%s'", configParser.options.CloudflareBypassURL())
+	}
+}
+
+func TestCloudflareBypassEnabledOptionParsing(t *testing.T) {
+	configParser := NewConfigParser()
+
+	if configParser.options.CloudflareBypassEnabled() {
+		t.Fatalf("Expected CLOUDFLARE_BYPASS_ENABLED to be disabled by default")
+	}
+
+	if err := configParser.parseLines([]string{"CLOUDFLARE_BYPASS_ENABLED=1"}); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if !configParser.options.CloudflareBypassEnabled() {
+		t.Fatalf("Expected CLOUDFLARE_BYPASS_ENABLED to be enabled")
+	}
+
+	if err := configParser.parseLines([]string{"CLOUDFLARE_BYPASS_ENABLED=0"}); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if configParser.options.CloudflareBypassEnabled() {
+		t.Fatalf("Expected CLOUDFLARE_BYPASS_ENABLED to be disabled")
+	}
+}
+
+func TestCloudflareBypassTimeoutOptionParsing(t *testing.T) {
+	configParser := NewConfigParser()
+
+	if configParser.options.CloudflareBypassTimeout().Seconds() != 60 {
+		t.Fatalf("Expected CLOUDFLARE_BYPASS_TIMEOUT to be 60 seconds by default")
+	}
+
+	if err := configParser.parseLines([]string{"CLOUDFLARE_BYPASS_TIMEOUT=90"}); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if configParser.options.CloudflareBypassTimeout().Seconds() != 90 {
+		t.Fatalf("Expected CLOUDFLARE_BYPASS_TIMEOUT to be 90 seconds")
+	}
+}
+
+func TestCloudflareBypassCacheTTLOptionParsing(t *testing.T) {
+	configParser := NewConfigParser()
+
+	if configParser.options.CloudflareBypassCacheTTL().Minutes() != 25 {
+		t.Fatalf("Expected CLOUDFLARE_BYPASS_CACHE_TTL to be 25 minutes by default")
+	}
+
+	if err := configParser.parseLines([]string{"CLOUDFLARE_BYPASS_CACHE_TTL=30"}); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if configParser.options.CloudflareBypassCacheTTL().Minutes() != 30 {
+		t.Fatalf("Expected CLOUDFLARE_BYPASS_CACHE_TTL to be 30 minutes")
+	}
+}
+
 func TestCreateAdminOptionParsing(t *testing.T) {
 	configParser := NewConfigParser()
 

@@ -63,6 +63,9 @@ type Feed struct {
 	NtfyTopic                   string    `json:"ntfy_topic"`
 	PushoverPriority            int       `json:"pushover_priority"`
 	ProxyURL                    string    `json:"proxy_url"`
+	// CloudflareBypass is a tri-state override for Cloudflare clearance bypass:
+	// nil = follow global config; true/false = force override.
+	CloudflareBypass *bool `json:"cloudflare_bypass"`
 
 	// Non-persisted attributes
 	Category *Category `json:"category,omitempty"`
@@ -174,6 +177,8 @@ type FeedCreationRequest struct {
 	KeepFilterEntryRules        string `json:"keep_filter_entry_rules"`
 	UrlRewriteRules             string `json:"urlrewrite_rules"`
 	ProxyURL                    string `json:"proxy_url"`
+	// CloudflareBypass: nil = follow global; true/false = force override.
+	CloudflareBypass *bool `json:"cloudflare_bypass"`
 }
 
 type FeedCreationRequestFromSubscriptionDiscovery struct {
@@ -212,6 +217,9 @@ type FeedModificationRequest struct {
 	HideGlobally                *bool   `json:"hide_globally"`
 	DisableHTTP2                *bool   `json:"disable_http2"`
 	ProxyURL                    *string `json:"proxy_url"`
+	// CloudflareBypass: nil = no change; non-nil true/false = force override.
+	// Clearing back to "follow global" is not supported via PATCH in v1.
+	CloudflareBypass *bool `json:"cloudflare_bypass"`
 }
 
 // Patch updates a feed with modified values.
@@ -318,6 +326,11 @@ func (f *FeedModificationRequest) Patch(feed *Feed) {
 
 	if f.ProxyURL != nil {
 		feed.ProxyURL = *f.ProxyURL
+	}
+
+	if f.CloudflareBypass != nil {
+		value := *f.CloudflareBypass
+		feed.CloudflareBypass = &value
 	}
 }
 

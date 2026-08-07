@@ -376,3 +376,34 @@ func TestFeedScheduleNextCheckEntryFrequencyLargeNewTTL(t *testing.T) {
 		t.Error(`The next_check_at should be after timeBefore + entry frequency min interval`)
 	}
 }
+
+func TestFeedModificationRequestPatchCloudflareBypass(t *testing.T) {
+	feed := &Feed{}
+	req := &FeedModificationRequest{}
+
+	// Omitted field must leave the tri-state as nil (follow global).
+	req.Patch(feed)
+	if feed.CloudflareBypass != nil {
+		t.Fatalf("expected nil CloudflareBypass when omitted, got %v", *feed.CloudflareBypass)
+	}
+
+	enabled := true
+	req.CloudflareBypass = &enabled
+	req.Patch(feed)
+	if feed.CloudflareBypass == nil || !*feed.CloudflareBypass {
+		t.Fatalf("expected CloudflareBypass=true, got %v", feed.CloudflareBypass)
+	}
+
+	// Patch must copy the value, not retain the request pointer.
+	enabled = false
+	if !*feed.CloudflareBypass {
+		t.Fatal("expected feed.CloudflareBypass to keep true after request value mutation")
+	}
+
+	disabled := false
+	req.CloudflareBypass = &disabled
+	req.Patch(feed)
+	if feed.CloudflareBypass == nil || *feed.CloudflareBypass {
+		t.Fatalf("expected CloudflareBypass=false, got %v", feed.CloudflareBypass)
+	}
+}

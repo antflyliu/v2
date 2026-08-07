@@ -585,6 +585,190 @@ func TestRequestBuilder_TimeoutConfiguration(t *testing.T) {
 	}
 }
 
+func TestRequestBuilder_ResolveProxyURL_FeedProxy(t *testing.T) {
+	builder := NewRequestBuilder().WithCustomFeedProxyURL("http://feed-proxy.example.com:8080")
+
+	proxyURL, err := builder.ResolveProxyURL()
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+	if proxyURL == nil {
+		t.Fatal("Expected feed proxy URL, got nil")
+	}
+	if proxyURL.String() != "http://feed-proxy.example.com:8080" {
+		t.Fatalf("Expected feed proxy URL, got %q", proxyURL.String())
+	}
+}
+
+func TestRequestBuilder_ResolveProxyURL_AppProxy(t *testing.T) {
+	appProxy, err := url.Parse("http://app-proxy.example.com:3128")
+	if err != nil {
+		t.Fatalf("Unable to parse app proxy URL: %v", err)
+	}
+
+	builder := NewRequestBuilder().
+		WithCustomApplicationProxyURL(appProxy).
+		UseCustomApplicationProxyURL(true)
+
+	proxyURL, err := builder.ResolveProxyURL()
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+	if proxyURL == nil {
+		t.Fatal("Expected app proxy URL, got nil")
+	}
+	if proxyURL.String() != appProxy.String() {
+		t.Fatalf("Expected app proxy URL %q, got %q", appProxy.String(), proxyURL.String())
+	}
+}
+
+func TestRequestBuilder_ResolveProxyURL_Rotator(t *testing.T) {
+	rotator, err := proxyrotator.NewProxyRotator([]string{
+		"http://proxy1.example.com:8080",
+		"http://proxy2.example.com:8080",
+	})
+	if err != nil {
+		t.Fatalf("Unable to create proxy rotator: %v", err)
+	}
+
+	builder := NewRequestBuilder().WithProxyRotator(rotator)
+
+	first, err := builder.ResolveProxyURL()
+	if err != nil {
+		t.Fatalf("Expected no error on first resolve, got %v", err)
+	}
+	if first == nil || first.String() != "http://proxy1.example.com:8080" {
+		t.Fatalf("Expected first rotator proxy, got %v", first)
+	}
+
+	second, err := builder.ResolveProxyURL()
+	if err != nil {
+		t.Fatalf("Expected no error on second resolve, got %v", err)
+	}
+	if second == nil || second.String() != "http://proxy2.example.com:8080" {
+		t.Fatalf("Expected second rotator proxy, got %v", second)
+	}
+}
+
+func TestRequestBuilder_ResolveProxyURL_FeedProxyTakesPriority(t *testing.T) {
+	appProxy, err := url.Parse("http://app-proxy.example.com:3128")
+	if err != nil {
+		t.Fatalf("Unable to parse app proxy URL: %v", err)
+	}
+
+	rotator, err := proxyrotator.NewProxyRotator([]string{"http://proxy1.example.com:8080"})
+	if err != nil {
+		t.Fatalf("Unable to create proxy rotator: %v", err)
+	}
+
+	builder := NewRequestBuilder().
+		WithCustomFeedProxyURL("http://feed-proxy.example.com:8080").
+		WithCustomApplicationProxyURL(appProxy).
+		UseCustomApplicationProxyURL(true).
+		WithProxyRotator(rotator)
+
+	proxyURL, err := builder.ResolveProxyURL()
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+	if proxyURL == nil || proxyURL.String() != "http://feed-proxy.example.com:8080" {
+		t.Fatalf("Expected feed proxy to take priority, got %v", proxyURL)
+	}
+}
+
+func TestRequestBuilder_ResolveProxyURL_InvalidFeedProxy(t *testing.T) {
+	builder := NewRequestBuilder().WithCustomFeedProxyURL("http://bad proxy")
+
+	_, err := builder.ResolveProxyURL()
+	if err == nil {
+		t.Fatal("Expected error for invalid feed proxy URL")
+	}
+	if !strings.Contains(err.Error(), "invalid feed proxy URL") {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+}
+
+func TestRequestBuilder_ResolveProxyURL_NoProxy(t *testing.T) {
+	builder := NewRequestBuilder()
+
+	proxyURL, err := builder.ResolveProxyURL()
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+	if proxyURL != nil {
+		t.Fatalf("Expected nil proxy URL, got %v", proxyURL)
+	}
+}
+
+func TestRequestBuilder_WithLockedProxyURL_SkipsRotator(t *testing.T) {
+	configureFetcherAllowPrivateNetworksOption(t, "0")
+
+	rotator, err := proxyrotator.NewProxyRotator([]string{
+		"http://proxy1.example.com:8080",
+		"http://proxy2.example.com:8080",
+	})
+	if err != nil {
+		t.Fatalf("Unable to create proxy rotator: %v", err)
+	}
+
+	targetURL := "http://feed.invalid/rss.xml"
+	proxyRequests := make(chan string, 1)
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case proxyRequests <- r.URL.String():
+		default:
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer proxyServer.Close()
+
+	lockedProxy, err := url.Parse(proxyServer.URL)
+	if err != nil {
+		t.Fatalf("Unable to parse locked proxy URL: %v", err)
+	}
+
+	builder := NewRequestBuilder().
+		WithProxyRotator(rotator).
+		WithLockedProxyURL(lockedProxy)
+
+	resp, err := builder.ExecuteRequest(targetURL)
+	if err != nil {
+		t.Fatalf("Expected locked proxy execute to succeed: %v", err)
+	}
+	resp.Body.Close()
+
+	select {
+	case gotURL := <-proxyRequests:
+		if gotURL != targetURL {
+			t.Fatalf("Expected proxy request URL to be %q, got %q", targetURL, gotURL)
+		}
+	default:
+		t.Fatal("Expected request to be sent through the locked proxy")
+	}
+
+	// Locked path must not advance the rotator; next proxy should still be the first one.
+	next := rotator.GetNextProxy()
+	if next == nil || next.String() != "http://proxy1.example.com:8080" {
+		t.Fatalf("Expected rotator to remain at first proxy after locked execute, got %v", next)
+	}
+}
+
+func TestRequestBuilder_WithLockedProxyURL_ReturnsBuilder(t *testing.T) {
+	lockedProxy, err := url.Parse("http://locked-proxy.example.com:8080")
+	if err != nil {
+		t.Fatalf("Unable to parse locked proxy URL: %v", err)
+	}
+
+	builder := NewRequestBuilder()
+	got := builder.WithLockedProxyURL(lockedProxy)
+	if got != builder {
+		t.Fatal("Expected WithLockedProxyURL to return the same builder")
+	}
+	if builder.lockedProxyURL != lockedProxy {
+		t.Fatal("Expected lockedProxyURL to be set on builder")
+	}
+}
+
 func configureFetcherAllowPrivateNetworksOption(t *testing.T, value string) {
 	t.Helper()
 

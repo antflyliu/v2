@@ -185,7 +185,8 @@ func (f *feedQueryBuilder) GetFeeds() (model.Feeds, error) {
 			f.pushover_enabled,
 			f.pushover_priority,
 			f.proxy_url,
-			f.ignore_entry_updates
+			f.ignore_entry_updates,
+			f.cloudflare_bypass
 		FROM
 			feeds f
 		LEFT JOIN
@@ -269,6 +270,7 @@ func (f *feedQueryBuilder) GetFeeds() (model.Feeds, error) {
 			&feed.PushoverPriority,
 			&feed.ProxyURL,
 			&feed.IgnoreEntryUpdates,
+			&feed.CloudflareBypass,
 		)
 		if err != nil {
 			return nil, fmt.Errorf(`store: unable to fetch feeds row: %w`, err)
