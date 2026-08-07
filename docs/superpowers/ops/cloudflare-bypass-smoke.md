@@ -1,5 +1,7 @@
 # Cloudflare bypass — local operator smoke checklist
 
+Related scaling ops: `docs/superpowers/ops/scaling-b-runbook.md`
+
 Local fork ops note for the clearance bypass (miniflux + camoufox-turnstile).  
 Offline unit suites are CI-safe; **live Camoufox against real Cloudflare sites is a manual operator step only** (not automated here).
 

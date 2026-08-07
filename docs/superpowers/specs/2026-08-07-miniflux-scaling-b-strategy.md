@@ -1,7 +1,10 @@
 # Miniflux 5000 源扩容 — 策略 B「分层实时」配置设计
 
 **Date:** 2026-08-07  
-**Status:** Draft (awaiting user review)  
+**Status:** Approved (2026-08-07)  
+**Plan:** `docs/superpowers/plans/2026-08-07-miniflux-scaling-b-strategy.md`  
+**Ops:** `docs/superpowers/ops/scaling-b-runbook.md`, `docs/superpowers/ops/scaling-b-stage-params.md`  
+
 **Scope:** 配置与运营策略（不改 Miniflux 核心代码；不引入新服务）  
 **Related:** Cloudflare clearance bypass (`docs/superpowers/specs/2026-08-06-cloudflare-clearance-bypass-design.md`)
 
