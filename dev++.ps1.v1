@@ -1,0 +1,102 @@
+<#
+.SYNOPSIS
+  Miniflux 开发启动脚本。环境变量统一从 .env.dev 读取。
+.EXAMPLE
+  .\dev.ps1                  # 正常启动
+  .\dev.ps1 -CreateAdmin     # 首次运行，建管理员
+  .\dev.ps1 -WebOnly         # 只跑 Web，不抓取
+  .\dev.ps1 -WorkerOnly      # 只跑采集，调 reader 逻辑用
+  .\dev.ps1 -Build           # 编译成 exe 而不是 go run
+#>
+[CmdletBinding()]
+param(
+    [switch]$CreateAdmin,
+    [switch]$WebOnly,
+    [switch]$WorkerOnly,
+    [switch]$Build,
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$Rest
+)
+
+$ErrorActionPreference = 'Stop'
+# $PSScriptRoot 是脚本文件自身所在的目录，所以即使 VS Code 从别的目录调起它，脚本内部也会自动切回项目根。
+Set-Location $PSScriptRoot
+
+$envFile = Join-Path $PSScriptRoot '.env.dev'
+if (-not (Test-Path $envFile)) {
+    Write-Error "缺少 .env.dev，请先创建（参见项目 README）"
+}
+
+# 记录原值，退出时还原，避免污染当前终端
+$saved = @{}
+$applied = [System.Collections.Generic.List[string]]::new()
+
+function Set-DevEnv([string]$key, [string]$value) {
+    if (-not $saved.ContainsKey($key)) {
+        $saved[$key] = [Environment]::GetEnvironmentVariable($key, 'Process')
+        $applied.Add($key) | Out-Null
+    }
+    Set-Item -Path "Env:$key" -Value $value
+}
+
+try {
+    # ---- 解析 .env.dev ----
+    Get-Content $envFile | ForEach-Object {
+        $line = $_.Trim()
+        if ($line -eq '' -or $line.StartsWith('#')) { return }
+        $idx = $line.IndexOf('=')
+        if ($idx -lt 1) { return }
+        $k = $line.Substring(0, $idx).Trim()
+        $v = $line.Substring($idx + 1).Trim()
+        # 容错：去掉误加的成对引号
+        if ($v.Length -ge 2 -and
+            (($v.StartsWith('"') -and $v.EndsWith('"')) -or
+             ($v.StartsWith("'") -and $v.EndsWith("'")))) {
+            $v = $v.Substring(1, $v.Length - 2)
+        }
+        Set-DevEnv $k $v
+    }
+
+    # ---- 模式开关 ----
+    if ($CreateAdmin) {
+        Set-DevEnv 'CREATE_ADMIN'   '1'
+        Set-DevEnv 'ADMIN_USERNAME' 'admin'
+        Set-DevEnv 'ADMIN_PASSWORD' '123456'
+        Write-Host '[dev] 将创建管理员 admin / 123456' -ForegroundColor Yellow
+    }
+    # 关掉采集，Miniflux: 仅 Web（不抓取）
+    if ($WebOnly)    {
+        Set-DevEnv 'SCHEDULER_SERVICE' '0'
+        Write-Host '[dev] 仅 Web 模式（不自动抓取）' -ForegroundColor Cyan
+    }
+    # 关掉 Web，Miniflux: 仅 Worker（调采集）
+    if ($WorkerOnly) {
+        Set-DevEnv 'DISABLE_HTTP_SERVICE' '1'
+        Set-DevEnv 'POLLING_FREQUENCY'    '1'
+        Write-Host '[dev] 仅 Worker 模式（无 HTTP 服务）' -ForegroundColor Cyan
+    }
+    # 默认什么参数都不传，Miniflux: Web + Worker
+    Write-Host "[dev] DB      = $($env:DATABASE_URL -replace ':[^:@/]+@', ':****@')"
+    Write-Host "[dev] LISTEN  = $($env:LISTEN_ADDR)"
+    Write-Host "[dev] Go      = $(go version)"
+    Write-Host ''
+
+    if ($Build) {
+        New-Item -ItemType Directory -Force -Path tmp | Out-Null
+        go build -ldflags "-X 'miniflux.app/v2/internal/version.Version=dev'" -o tmp/miniflux.exe .
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & .\tmp\miniflux.exe @Rest
+    } else {
+        go run . @Rest
+    }
+}
+finally {
+    foreach ($k in $applied) {
+        if ($null -eq $saved[$k]) {
+            Remove-Item -Path "Env:$k" -ErrorAction SilentlyContinue
+        } else {
+            Set-Item -Path "Env:$k" -Value $saved[$k]
+        }
+    }
+    Write-Host '[dev] 环境变量已还原' -ForegroundColor DarkGray
+}

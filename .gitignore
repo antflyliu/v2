@@ -11,3 +11,12 @@ dev*.ps1
 .vscode/
 tmp/
 *.exe
+
+.cocoindex_code
+.devcontainer
+.omc
+.prompts
+.superpowers
+.vscode
+
+vendor

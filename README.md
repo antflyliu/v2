@@ -150,6 +150,8 @@ Credits
 
 # 本地启动
 
+## go 相关命令
+
 ```
 
 go build -o miniflux.exe .
@@ -209,6 +211,60 @@ PG 建库：
 调试使用
 ```
 
+## 启动脚本
+
+1. 第一个可用版本：dev++.ps1.v1
+
+2. 升级后第二个版本：dev++.ps1，使用 Cloudflare Tunnel 代理本地服务，可用域名 https://miniflux.asoidhfoas.ltd 进行公网访问本地服务 
+
+```
+[dev] DB       = postgres://postgres:****@127.0.0.1:5432/miniflux?sslmode=disable
+[dev] LISTEN   = 127.0.0.1:8080
+[dev] BASE_URL = https://miniflux.asoidhfoas.ltd
+[dev] TUNNEL   = https://miniflux.asoidhfoas.ltd -> http://127.0.0.1:8080
+[dev] Go       = go version go1.26.2 windows/amd64
+
+level=INFO msg="Running database migrations" current_version=133 latest_version=133
+level=DEBUG msg="Starting daemon..."
+level=DEBUG msg="Starting background scheduler..."
+level=DEBUG msg="Worker started" worker_id=4
+level=DEBUG msg="Worker started" worker_id=1
+level=DEBUG msg="Worker started" worker_id=5
+level=DEBUG msg="Worker started" worker_id=0
+level=DEBUG msg="Worker started" worker_id=3
+level=DEBUG msg="Worker started" worker_id=7
+level=DEBUG msg="Worker started" worker_id=2
+level=DEBUG msg="Worker started" worker_id=9
+level=DEBUG msg="Worker started" worker_id=8
+level=DEBUG msg="Worker started" worker_id=6
+level=INFO msg="Starting HTTP server" listen_address=127.0.0.1:8080
+```
+
+注意：
+
+如果执行 dev++.ps1 脚本报错如下：
+```
+> .\dev++.ps1
+.\dev++.ps1 : File D:\WORKSPACE\all-monitor-space\miniflux-v2\dev++.ps1 cannot be loaded. The file D:\WORKSPACE\all-monitor-space\mi
+niflux-v2\dev++.ps1 is not digitally signed. You cannot run this script on the current system. For more information about running sc
+ripts and setting execution policy, see about_Execution_Policies at https:/go.microsoft.com/fwlink/?LinkID=135170.
+At line:1 char:1
++ .\dev++.ps1
++ ~~~~~~~~~~~
++ CategoryInfo          : SecurityError: (:) [], PSSecurityException
++ FullyQualifiedErrorId : UnauthorizedAccess
+```
+
+执行如下命令解除这个文件的阻止：
+```
+Unblock-File -LiteralPath ".\dev++.ps1"
+
+# 检查是否仍有互联网标记
+Get-Item ".\dev++.ps1" -Stream *
+
+```
+
+
 # 订阅本地服务
 
 对于如果要订阅本地启动的 rsshub 中的服务，需要开启如下配置(.env.dev + packaging/miniflux.conf)：
@@ -216,5 +272,19 @@ PG 建库：
 # 解除默认阻止 fetcher 访问私有网络和回环地址
 FETCHER_ALLOW_PRIVATE_NETWORKS=1
 ```
+
+## Error feed refresh（错误源自动刷新）
+
+后台 worker 可定期串行刷新仍处于解析错误状态的 feed。通过环境变量控制（`dev++.ps1` 会从 `.env.dev` 加载）：
+
+```
+# 单位：分钟。0=禁用（默认）；例如 30 表示每 30 分钟扫描一次
+ERROR_REFRESH_INTERVAL=30
+```
+
+行为说明：
+- `ERROR_REFRESH_INTERVAL=0` 时关闭该循环（默认，便于测试）
+- 开启后与主进程同启同停（worker pool shutdown 一并结束）
+- 错误源串行刷新，相邻 feed 之间随机退避 3–5 秒，降低对目标站的压力
 
 
