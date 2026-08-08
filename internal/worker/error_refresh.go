@@ -52,11 +52,11 @@ func StartErrorRefreshLoop(store *storage.Storage, shutdown <-chan struct{}, wg 
 
 func refreshErrorFeeds(store *storage.Storage, shutdown <-chan struct{}) {
 	// Only retry feeds that currently have errors, and only while still under the
-	// recoverable ceiling (parsing_error_count < 5 ⇒ count is 1..4).
+	// recoverable ceiling (parsing_error_count < 6 ⇒ count is 1..5).
 	jobs, err := store.NewBatchBuilder().
 		WithBatchSize(config.Opts.BatchSize()).
 		WithErrorFeedsOnly().
-		WithErrorLimit(5).
+		WithErrorLimit(6).
 		WithoutDisabledFeeds().
 		FetchJobs()
 	if err != nil {
