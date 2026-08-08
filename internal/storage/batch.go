@@ -53,6 +53,12 @@ func (b *batchBuilder) WithErrorLimit(limit int) *batchBuilder {
 	return b
 }
 
+// WithErrorFeedsOnly restricts the batch to feeds that currently have a parsing error.
+func (b *batchBuilder) WithErrorFeedsOnly() *batchBuilder {
+	b.conditions = append(b.conditions, "parsing_error_count > 0")
+	return b
+}
+
 func (b *batchBuilder) WithNextCheckExpired() *batchBuilder {
 	b.conditions = append(b.conditions, "next_check_at < now()")
 	return b
