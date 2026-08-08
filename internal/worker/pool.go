@@ -51,5 +51,9 @@ func NewPool(store *storage.Storage, nbWorkers int) *Pool {
 		go worker.Run(workerPool.queue, workerPool.shutdown, &workerPool.wg)
 	}
 
+	// Shares pool shutdown + wg so Shutdown() waits for the error refresh loop too.
+	// No-ops when ERROR_REFRESH_INTERVAL <= 0 or store is nil.
+	StartErrorRefreshLoop(store, workerPool.shutdown, &workerPool.wg)
+
 	return workerPool
 }

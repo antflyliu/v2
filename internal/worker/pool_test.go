@@ -7,10 +7,19 @@ import (
 	"testing"
 	"time"
 
+	"miniflux.app/v2/internal/config"
 	"miniflux.app/v2/internal/model"
 )
 
+func withDefaultConfig(t *testing.T) {
+	t.Helper()
+	prev := config.Opts
+	config.Opts = config.NewConfigOptions()
+	t.Cleanup(func() { config.Opts = prev })
+}
+
 func TestPushAfterShutdownDiscardsJobs(t *testing.T) {
+	withDefaultConfig(t)
 	pool := NewPool(nil, 2)
 	pool.Shutdown()
 
@@ -28,6 +37,7 @@ func TestPushAfterShutdownDiscardsJobs(t *testing.T) {
 }
 
 func TestShutdownUnblocksPendingPush(t *testing.T) {
+	withDefaultConfig(t)
 	pool := NewPool(nil, 0)
 
 	pushed := make(chan struct{})
@@ -59,6 +69,7 @@ func TestShutdownUnblocksPendingPush(t *testing.T) {
 }
 
 func TestShutdownIsIdempotent(t *testing.T) {
+	withDefaultConfig(t)
 	pool := NewPool(nil, 1)
 	pool.Shutdown()
 	pool.Shutdown()
