@@ -1353,6 +1353,22 @@ func TestDatabaseConnectionLifetimeOptionParsing(t *testing.T) {
 	}
 }
 
+func TestErrorRefreshIntervalOptionParsing(t *testing.T) {
+	configParser := NewConfigParser()
+
+	if configParser.options.ErrorRefreshInterval().Minutes() != 0 {
+		t.Fatalf("Expected ERROR_REFRESH_INTERVAL to be 0 minutes by default")
+	}
+
+	if err := configParser.parseLines([]string{"ERROR_REFRESH_INTERVAL=15"}); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if configParser.options.ErrorRefreshInterval().Minutes() != 15 {
+		t.Fatalf("Expected ERROR_REFRESH_INTERVAL to be 15 minutes")
+	}
+}
+
 func TestForceRefreshIntervalOptionParsing(t *testing.T) {
 	configParser := NewConfigParser()
 

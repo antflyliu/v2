@@ -246,6 +246,14 @@ func NewConfigOptions() *configOptions {
 				rawValue:        "0",
 				valueType:       boolType,
 			},
+			"ERROR_REFRESH_INTERVAL": {
+				parsedDuration: 0, // default disabled for tests
+				rawValue:       "0",
+				valueType:      minuteType,
+				validator: func(rawValue string) error {
+					return validateGreaterOrEqualThan(rawValue, 0)
+				},
+			},
 			"FETCHER_ALLOW_PRIVATE_NETWORKS": {
 				parsedBoolValue: false,
 				rawValue:        "0",
@@ -756,6 +764,10 @@ func (c *configOptions) DisableLocalAuth() bool {
 
 func (c *configOptions) DisableSchedulerService() bool {
 	return c.options["DISABLE_SCHEDULER_SERVICE"].parsedBoolValue
+}
+
+func (c *configOptions) ErrorRefreshInterval() time.Duration {
+	return c.options["ERROR_REFRESH_INTERVAL"].parsedDuration
 }
 
 func (c *configOptions) FetchBilibiliWatchTime() bool {
